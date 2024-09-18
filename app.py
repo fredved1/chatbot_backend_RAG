@@ -1,7 +1,7 @@
 import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from llm_motor import LLMMotor, get_available_models, initialize_rag
+from llm_motor import LLMMotor, initialize_llm_motor, get_available_models
 import os
 from dotenv import load_dotenv
 
@@ -16,11 +16,8 @@ api_key = os.getenv('OPENAI_API_KEY')
 if not api_key:
     raise ValueError("OPENAI_API_KEY is not set in the environment variables")
 
-# Initialize RAG components
-initialize_rag()
-
-# Create a single instance of LLMMotor
-llm_motor = LLMMotor()
+# Initialize RAG components and LLMMotor
+llm_motor = initialize_llm_motor()
 
 app = Flask(__name__)
 CORS(app)
@@ -29,13 +26,22 @@ CORS(app)
 def send_message():
     data = request.json
     message = data.get('message')
-    response = llm_motor.generate_response(message)
-    return jsonify({"response": response})
+    response = llm_motor.get_response(message)
+    return jsonify({
+        "response": response['answer'],
+        "relevant_chunks": response['relevant_chunks'],
+        "token_usage": response['token_usage']
+    })
 
 @app.route('/api/start-conversation', methods=['POST'])
 def start_conversation():
-    opening_message = llm_motor.start_new_conversation()
+    opening_message = "Hallo! Hoe kan ik u vandaag helpen?"
     return jsonify({"message": opening_message})
+
+@app.route('/api/clear-memory', methods=['POST'])
+def clear_memory():
+    llm_motor.memory.clear()
+    return jsonify({"success": True, "message": "Geheugen gewist"})
 
 @app.route('/api/available-models', methods=['GET'])
 def get_available_models_route():
@@ -46,13 +52,11 @@ def get_available_models_route():
 def select_model():
     data = request.json
     model = data.get('model')
-    # Implementeer hier de logica om het model te wijzigen als dat nodig is
-    return jsonify({"success": True, "message": f"Model {model} geselecteerd"})
-
-@app.route('/api/clear-memory', methods=['POST'])
-def clear_memory():
-    llm_motor.clear_memory()
-    return jsonify({"success": True, "message": "Geheugen gewist"})
+    try:
+        llm_motor.change_model(model)
+        return jsonify({"success": True, "message": f"Model {model} geselecteerd"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
 
 @app.route('/', methods=['GET'])
 def home():
@@ -62,12 +66,6 @@ def home():
 def test():
     logger.info("Test route accessed")
     return "Test route is working!"
-
-@app.route('/chat', methods=['POST'])
-def chat():
-    user_input = request.json['message']
-    response = llm_motor.get_response(user_input)
-    return jsonify({'response': response})
 
 if __name__ == '__main__':
     logger.info("Starting Flask server on http://0.0.0.0:5001")

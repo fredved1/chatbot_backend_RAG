@@ -7,13 +7,13 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.callbacks import get_openai_callback
 
 class LLMMotor:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model_name: str = "gpt-3.5-turbo"):
         self.api_key = api_key
         self.embeddings = OpenAIEmbeddings(openai_api_key=api_key)
         self.vectorstore = None
-        self.vector_store_path = "/Users/uwv/Documents/Python_projecten/Oud/DATABASE/vector_store"  # Pas dit aan naar het juiste pad
+        self.vector_store_path = "/Users/uwv/Documents/Python_projecten/Oud/DATABASE/vector_store"
         
-        self.llm = ChatOpenAI(temperature=0, api_key=api_key)
+        self.llm = ChatOpenAI(temperature=0, api_key=api_key, model_name=model_name)
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
             return_messages=True
@@ -56,13 +56,21 @@ class LLMMotor:
             'token_usage': cb.total_tokens
         }
 
+    def change_model(self, new_model_name: str):
+        self.llm = ChatOpenAI(temperature=0, api_key=self.api_key, model_name=new_model_name)
+        self.qa_chain = ConversationalRetrievalChain.from_llm(
+            llm=self.llm,
+            retriever=self.vectorstore.as_retriever(),
+            memory=self.memory
+        )
+
 # Functie om de LLMMotor te initialiseren
-def initialize_llm_motor():
+def initialize_llm_motor(model_name: str = "gpt-3.5-turbo"):
     api_key = os.getenv('OPENAI_API_KEY')
     if not api_key:
         raise ValueError("OPENAI_API_KEY is niet ingesteld in de omgevingsvariabelen")
     
-    llm_motor = LLMMotor(api_key=api_key)
+    llm_motor = LLMMotor(api_key=api_key, model_name=model_name)
     llm_motor.load_vectorstore()
     return llm_motor
 
@@ -88,3 +96,8 @@ if __name__ == "__main__":
             print(f"    URL: {chunk['url']}")
         print(f"Token gebruik: {result['token_usage']}")
         print("\n" + "="*50 + "\n")
+
+def get_available_models(api_key):
+    # Implementeer hier de logica om beschikbare modellen op te halen
+    # Dit kan een statische lijst zijn of een API-aanroep naar OpenAI
+    return ["gpt-3.5-turbo", "gpt-4"]  # Voorbeeld
