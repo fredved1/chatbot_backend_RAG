@@ -145,3 +145,5 @@ gunicorn
 langchain
 faiss-cpu
 openai
+requests
+tempfile
