@@ -5,13 +5,23 @@ from langchain.memory import ConversationBufferMemory
 from langchain.vectorstores import FAISS
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.callbacks import get_openai_callback
+import openai
+
+def get_available_models(api_key):
+    openai.api_key = api_key
+    try:
+        models = openai.Model.list()
+        return [model.id for model in models.data if model.id.startswith("gpt")]
+    except Exception as e:
+        print(f"Error fetching models: {e}")
+        return []
 
 class LLMMotor:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.embeddings = OpenAIEmbeddings(openai_api_key=api_key)
         self.vectorstore = None
-        self.vector_store_path = "/Users/uwv/Documents/Python_projecten/Oud/DATABASE/vector_store"  # Pas dit aan naar het juiste pad
+        self.vector_store_path = "vector_store"  # Pas dit aan naar het juiste pad
         
         self.llm = ChatOpenAI(temperature=0, api_key=api_key)
         self.memory = ConversationBufferMemory(
@@ -88,3 +98,19 @@ if __name__ == "__main__":
             print(f"    URL: {chunk['url']}")
         print(f"Token gebruik: {result['token_usage']}")
         print("\n" + "="*50 + "\n")
+
+    # Test get_available_models functie
+    print("\nTesting get_available_models function:")
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        print("OPENAI_API_KEY is niet ingesteld in de omgevingsvariabelen")
+    else:
+        available_models = get_available_models(api_key)
+        if available_models:
+            print("Beschikbare GPT modellen:")
+            for model in available_models:
+                print(f"- {model}")
+        else:
+            print("Geen GPT modellen gevonden of er is een fout opgetreden bij het ophalen van de modellen.")
+
+__all__ = ['LLMMotor', 'initialize_llm_motor', 'get_available_models']

@@ -1,7 +1,8 @@
 import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from llm_motor import LLMMotor, initialize_llm_motor, get_available_models
+from llm_motor import LLMMotor, initialize_llm_motor
+from llm_motor import get_available_models
 import os
 from dotenv import load_dotenv
 
@@ -43,11 +44,6 @@ def clear_memory():
     llm_motor.memory.clear()
     return jsonify({"success": True, "message": "Geheugen gewist"})
 
-@app.route('/api/available-models', methods=['GET'])
-def get_available_models_route():
-    models = get_available_models(api_key)
-    return jsonify({"models": models})
-
 @app.route('/api/select-model', methods=['POST'])
 def select_model():
     data = request.json
@@ -57,6 +53,11 @@ def select_model():
         return jsonify({"success": True, "message": f"Model {model} geselecteerd"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
+
+@app.route('/api/available-models', methods=['GET'])
+def get_available_models_route():
+    models = get_available_models(api_key)
+    return jsonify({"models": models})
 
 @app.route('/', methods=['GET'])
 def home():
