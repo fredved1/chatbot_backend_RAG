@@ -1,112 +1,105 @@
-# chatbot_app.py
+# streamlit.py
 
-import os
 import streamlit as st
+from llm_motor import LLMMotor, get_available_models
+import os
 from dotenv import load_dotenv
+import openai  # Gebruik de openai-module direct
 
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
-
-# Laad de OpenAI API-sleutel uit het .env-bestand
+# Laad de .env variabelen in
 load_dotenv()
-api_key = os.getenv('OPENAI_API_KEY')
 
-if not api_key:
-    st.error("OPENAI_API_KEY is niet ingesteld in de omgevingsvariabelen")
-    st.stop()
+# Haal de API-sleutel op
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialiseer de OpenAI LLM
-llm = ChatOpenAI(
-    temperature=0.7,
-    openai_api_key=api_key,
-    model_name="gpt-4o"  # Gebruik "gpt-3.5-turbo" als je geen toegang hebt tot GPT-4
-)
+# Sidebar configuratie
+with st.sidebar:
+    if not openai_api_key:
+        st.error("API-sleutel niet gevonden. Zorg ervoor dat deze is ingesteld in het .env-bestand.")
+        openai_api_key = st.text_input("OpenAI API-sleutel", key="chatbot_api_key", type="password")
+    else:
+        st.success("API-sleutel succesvol geladen!")
+        st.write(f"Gebruikte API-sleutel: {openai_api_key[:5]}...")  # Verberg een deel van de API-sleutel
 
-# Laad je FAISS vectorstore
-vector_store_path = "vector_store"  # Vervang dit met het pad naar je FAISS indexbestand
-if os.path.exists(vector_store_path):
-    embeddings = OpenAIEmbeddings(openai_api_key=api_key)
-    vectorstore = FAISS.load_local(
-        vector_store_path,
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
-else:
-    st.error("Vectorstore niet gevonden. Zorg ervoor dat deze is meegeleverd met de applicatie.")
-    st.stop()
+    # Toon modelselectie en temperatuurinstelling als de API-sleutel is ingevoerd
+    if openai_api_key:
+        models = get_available_models(openai_api_key)
+        default_model = "gpt-4" if "gpt-4" in models else models[0]
+        model = st.selectbox("Selecteer Model", models, index=models.index(default_model))
+        temperature = st.slider("Temperatuur", min_value=0.0, max_value=2.0, value=0.7, step=0.1)
+    else:
+        model = "gpt-3.5-turbo"
+        temperature = 0.7
 
-# Creëer een retriever van de vectorstore
-retriever = vectorstore.as_retriever()
-
-# Initialiseer geheugen met output_key
-if 'memory' not in st.session_state:
-    st.session_state.memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        return_messages=True,
-        output_key='answer'
-    )
-
-# Importeer je aangepaste prompts uit uwv_agent.py
-import uwv_agent
-
-# Haal de prompts op
-condense_question_prompt = uwv_agent.get_condense_question_prompt()
-combine_docs_prompt = uwv_agent.get_combine_docs_prompt()
-
-# Maak de ConversationalRetrievalChain met je custom prompts
-qa_chain = ConversationalRetrievalChain.from_llm(
-    llm=llm,
-    retriever=retriever,
-    memory=st.session_state.memory,
-    condense_question_prompt=condense_question_prompt,
-    combine_docs_chain_kwargs={'prompt': combine_docs_prompt},
-    return_source_documents=True
-)
-
-# Streamlit-applicatie
+# Hoofdtitel en beschrijving van de app
 st.title("UWV Chatbot")
+st.caption("Een Streamlit-chatbot aangedreven door OpenAI en LangChain, gespecialiseerd in UWV-diensten.")
 
-if 'generated' not in st.session_state:
-    st.session_state['generated'] = []
-if 'past' not in st.session_state:
-    st.session_state['past'] = []
+# Initialiseer LLMMotor en start een nieuwe conversatie als deze nog niet bestaat
+if "llm_motor" not in st.session_state:
+    if not openai_api_key:
+        st.warning("Voer je OpenAI API-sleutel in om te beginnen.")
+        st.stop()
+    st.session_state.llm_motor = LLMMotor(openai_api_key, model, temperature)
+    opening_message = st.session_state.llm_motor.start_new_conversation()
+    st.session_state.messages = [{"role": "assistant", "content": opening_message}]
 
-def get_text():
-    input_text = st.text_input("Jij: ", key="input")
-    return input_text
+# Toon de gespreksgeschiedenis
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-user_input = get_text()
+# Verwerk gebruikersinvoer
+if prompt := st.chat_input("Stel hier uw vraag over UWV..."):
+    if not openai_api_key:
+        st.info("Voeg alstublieft uw OpenAI API-sleutel toe om door te gaan.")
+        st.stop()
 
-if user_input:
-    with st.spinner("Beantwoordt..."):
-        response = qa_chain({"question": user_input})
-        answer = response['answer']
-        source_documents = response.get('source_documents', [])
-        
-        # Haal de relevante stukken en URLs uit de source_documents
+    # Voeg het gebruikersbericht toe aan de weergave
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.spinner("Even denken..."):
+        # Genereer een reactie met behulp van LLMMotor
+        response = st.session_state.llm_motor.generate_response(prompt)
+        answer = response["answer"]  # Haal het antwoord op
+        source_documents = response["source_documents"]  # Haal de bronnen op
+
+    # Voeg het antwoord van de assistent toe aan de weergave
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+    with st.chat_message("assistant"):
+        st.markdown(answer)
+
+    # Toon maximaal 3 relevante documenten
+    if source_documents:
         relevant_chunks = [
             {
                 'content': doc.page_content,
                 'url': doc.metadata.get('url', 'Geen URL beschikbaar')
-            } for doc in source_documents
+            } for doc in source_documents[:3]  # Beperk tot 3 bronnen
         ]
-        
-        # Sla het antwoord en de vraag op
-        st.session_state.past.append(user_input)
-        st.session_state.generated.append(answer)
-        
-        # Toon het gesprek
-        for i in range(len(st.session_state['generated'])-1, -1, -1):
-            st.markdown(f"**Bot:** {st.session_state['generated'][i]}")
-            st.markdown(f"**Jij:** {st.session_state['past'][i]}")
-        
-        # Toon relevante documenten indien aanwezig
-        if relevant_chunks:
-            st.markdown("### Relevante informatie:")
-            for idx, chunk in enumerate(relevant_chunks, 1):
-                with st.expander(f"Bron {idx}"):
-                    st.markdown(f"**Inhoud:** {chunk['content']}")
-                    st.markdown(f"**URL:** {chunk['url']}")
+        st.markdown("### Relevante informatie:")
+        for idx, chunk in enumerate(relevant_chunks, 1):
+            with st.expander(f"Bron {idx}"):
+                st.markdown(f"**Inhoud:** {chunk['content']}")
+                st.markdown(f"**URL:** {chunk['url']}")
+
+    # Verplaats de 4e uitklapper buiten de if-blok
+    with st.expander("Gespreksgeschiedenis"):
+        chat_history = st.session_state.llm_motor.get_chat_history()
+        for msg in chat_history:
+            st.markdown(f"**{msg['role'].capitalize()}:** {msg['content']}")
+
+        # Knop om het geheugen te legen
+        if st.button("Geheugen Wissen"):
+            st.session_state.llm_motor.clear_memory()
+            st.session_state.messages = []
+            st.success("Gespreksgeschiedenis is gewist.")
+            st.experimental_rerun()
+
+# Start nieuwe conversatie knop
+if st.button("Start Nieuwe Conversatie"):
+    st.session_state.llm_motor.start_new_conversation()
+    st.session_state.messages = [{"role": "assistant", "content": st.session_state.llm_motor.memory.chat_memory.messages[-1].content}]
+    st.experimental_rerun()

@@ -3,7 +3,7 @@ from langchain.schema import HumanMessage, AIMessage
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain.vectorstores import FAISS
-from typing import List, Dict
+from typing import List, Dict, Any
 
 # Importeer je aangepaste prompts uit uwv_agent.py
 from uwv_agent import get_condense_question_prompt, get_combine_docs_prompt
@@ -45,19 +45,26 @@ class LLMMotor:
             memory=self.memory,
             condense_question_prompt=condense_question_prompt,
             combine_docs_chain_kwargs={'prompt': combine_docs_prompt},
-            return_source_documents=True
+            return_source_documents=True  # Zorg dat source_documents worden teruggegeven
         )
 
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str) -> Dict[str, Any]:
         response = self.qa_chain({"question": prompt})
         answer = response['answer']
-        return answer
+        source_documents = response.get('source_documents', [])
+        return {"answer": answer, "source_documents": source_documents}  # Retourneer beide
 
     def get_chat_history(self) -> List[Dict[str, str]]:
         return [
-            {"role": "user" if msg.type == "human" else "assistant", "content": msg.content}
+            {"role": "user" if isinstance(msg, HumanMessage) else "assistant", "content": msg.content}
             for msg in self.memory.chat_memory.messages
         ]
+
+    def add_message(self, role: str, content: str):
+        if role == "user":
+            self.memory.chat_memory.add_user_message(content)
+        elif role == "assistant":
+            self.memory.chat_memory.add_ai_message(content)
 
     def clear_memory(self):
         self.memory.clear()
@@ -69,7 +76,5 @@ class LLMMotor:
         return opening_message
 
 def get_available_models(api_key: str) -> List[str]:
-    import openai
-    openai.api_key = api_key
-    models = openai.Model.list()
-    return [model.id for model in models['data'] if model.id.startswith("gpt")]
+    # Gebruik een hardcoded lijst van beschikbare modellen
+    return ["gpt-4", "gpt-3.5-turbo"]
