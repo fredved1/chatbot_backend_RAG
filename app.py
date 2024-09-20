@@ -1,8 +1,7 @@
 import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from llm_motor import LLMMotor, initialize_llm_motor
-from llm_motor import get_available_models
+from llm_motor import initialize_llm_motor
 import os
 from dotenv import load_dotenv
 
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Haal de API key uit de omgevingsvariabelen
 api_key = os.getenv('OPENAI_API_KEY')
 if not api_key:
-    raise ValueError("OPENAI_API_KEY is not set in the environment variables")
+    raise ValueError("OPENAI_API_KEY is niet ingesteld in de omgevingsvariabelen")
 
 # Initialize RAG components and LLMMotor
 llm_motor = initialize_llm_motor()
@@ -27,37 +26,53 @@ CORS(app)
 def send_message():
     data = request.json
     message = data.get('message')
-    response = llm_motor.get_response(message)
-    return jsonify({
-        "response": response['answer'],
-        "relevant_chunks": response['relevant_chunks'],
-        "token_usage": response['token_usage']
-    })
+    if not message:
+        return jsonify({'error': 'Geen bericht ontvangen.'}), 400
+    
+    try:
+        response = llm_motor.get_response(message)
+        return jsonify({
+            "response": response['answer'],
+            "relevant_chunks": response['relevant_chunks'],
+            "token_usage": response['token_usage']
+        })
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 500
+    except Exception as e:
+        logger.exception("Onverwachte fout opgetreden.")
+        return jsonify({'error': 'Er is een onverwachte fout opgetreden.'}), 500
 
 @app.route('/api/start-conversation', methods=['POST'])
 def start_conversation():
-    opening_message = "Hallo! Hoe kan ik u vandaag helpen?"
-    return jsonify({"message": opening_message})
+    try:
+        opening_message = llm_motor.start_new_conversation()
+        return jsonify({"message": opening_message})
+    except Exception as e:
+        logger.exception("Fout bij het starten van een nieuw gesprek.")
+        return jsonify({"error": "Fout bij het starten van een nieuw gesprek."}), 500
 
 @app.route('/api/clear-memory', methods=['POST'])
 def clear_memory():
-    llm_motor.memory.clear()
-    return jsonify({"success": True, "message": "Geheugen gewist"})
+    try:
+        llm_motor.clear_memory()
+        return jsonify({"success": True, "message": "Geheugen gewist"})
+    except Exception as e:
+        logger.exception("Fout bij het wissen van het geheugen.")
+        return jsonify({"success": False, "message": "Fout bij het wissen van het geheugen."}), 500
 
 @app.route('/api/select-model', methods=['POST'])
 def select_model():
     data = request.json
     model = data.get('model')
+    temperature = data.get('temperature', 0.7)
+    if not model:
+        return jsonify({"success": False, "message": "Geen model opgegeven"}), 400
     try:
-        llm_motor.change_model(model)
+        llm_motor.change_model(model, temperature)
         return jsonify({"success": True, "message": f"Model {model} geselecteerd"})
     except Exception as e:
+        logger.exception("Fout bij het selecteren van het model.")
         return jsonify({"success": False, "message": str(e)}), 400
-
-@app.route('/api/available-models', methods=['GET'])
-def get_available_models_route():
-    models = get_available_models(api_key)
-    return jsonify({"models": models})
 
 @app.route('/', methods=['GET'])
 def home():

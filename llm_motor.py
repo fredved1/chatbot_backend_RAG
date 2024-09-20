@@ -1,116 +1,75 @@
-import os
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain.schema import HumanMessage, AIMessage
 from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationalRetrievalChain
 from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.callbacks import get_openai_callback
-import openai
+from typing import List, Dict
 
-def get_available_models(api_key):
-    openai.api_key = api_key
-    try:
-        models = openai.Model.list()
-        return [model.id for model in models.data if model.id.startswith("gpt")]
-    except Exception as e:
-        print(f"Error fetching models: {e}")
-        return []
+# Importeer je aangepaste prompts uit uwv_agent.py
+from uwv_agent import get_condense_question_prompt, get_combine_docs_prompt
+
+def create_chat_model(api_key: str, model: str = "gpt-4", temperature: float = 0.7):
+    return ChatOpenAI(
+        openai_api_key=api_key,
+        model=model,
+        temperature=temperature
+    )
 
 class LLMMotor:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.embeddings = OpenAIEmbeddings(openai_api_key=api_key)
-        self.vectorstore = None
-        self.vector_store_path = "vector_store"  # Pas dit aan naar het juiste pad
-        
-        self.llm = ChatOpenAI(temperature=0, api_key=api_key)
+    def __init__(self, api_key: str, model: str = "gpt-4", temperature: float = 0.7):
+        self.chat_model = create_chat_model(api_key, model, temperature)
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
-            return_messages=True
+            return_messages=True,
+            output_key='answer'
         )
-        self.qa_chain = None
-
-    def load_vectorstore(self):
-        if os.path.exists(self.vector_store_path):
-            self.vectorstore = FAISS.load_local(
-                self.vector_store_path, 
-                self.embeddings, 
-                allow_dangerous_deserialization=True
-            )
-            print("Vectorstore succesvol geladen.")
-            self.qa_chain = ConversationalRetrievalChain.from_llm(
-                llm=self.llm,
-                retriever=self.vectorstore.as_retriever(),
-                memory=self.memory
-            )
-        else:
-            raise FileNotFoundError("Vectorstore niet gevonden. Zorg ervoor dat deze is meegeleverd met de applicatie.")
-
-    def get_response(self, user_input: str):
-        if self.qa_chain is None:
-            raise ValueError("QA Chain is not initialized. Please load the vectorstore first.")
         
-        with get_openai_callback() as cb:
-            response = self.qa_chain({"question": user_input})
+        # Laad je FAISS vectorstore
+        vector_store_path = "vector_store"  # Vervang dit met het juiste pad
+        embeddings = OpenAIEmbeddings(openai_api_key=api_key)
+        self.vectorstore = FAISS.load_local(
+            vector_store_path,
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
+        self.retriever = self.vectorstore.as_retriever()
         
-        relevant_docs = self.vectorstore.similarity_search(user_input, k=3)
+        # Haal de prompts op
+        condense_question_prompt = get_condense_question_prompt()
+        combine_docs_prompt = get_combine_docs_prompt()
         
-        return {
-            'answer': response['answer'],
-            'relevant_chunks': [
-                {
-                    'content': doc.page_content,
-                    'url': doc.metadata.get('url', 'Geen URL beschikbaar')
-                } for doc in relevant_docs
-            ],
-            'token_usage': cb.total_tokens
-        }
+        # Maak de ConversationalRetrievalChain met je custom prompts
+        self.qa_chain = ConversationalRetrievalChain.from_llm(
+            llm=self.chat_model,
+            retriever=self.retriever,
+            memory=self.memory,
+            condense_question_prompt=condense_question_prompt,
+            combine_docs_chain_kwargs={'prompt': combine_docs_prompt},
+            return_source_documents=True
+        )
 
-# Functie om de LLMMotor te initialiseren
-def initialize_llm_motor():
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY is niet ingesteld in de omgevingsvariabelen")
-    
-    llm_motor = LLMMotor(api_key=api_key)
-    llm_motor.load_vectorstore()
-    return llm_motor
+    def generate_response(self, prompt: str) -> str:
+        response = self.qa_chain({"question": prompt})
+        answer = response['answer']
+        return answer
 
-# Voorbeeld van gebruik
-if __name__ == "__main__":
-    llm_motor = initialize_llm_motor()
-    
-    # Voorbeeld van een conversatie
-    queries = [
-        "Wat zijn de openingstijden van het UWV kantoor?",
-        "Kan je me meer vertellen over de diensten die ze aanbieden?",
-        "Hoe kan ik een afspraak maken?"
-    ]
-    
-    for query in queries:
-        result = llm_motor.get_response(query)
-        print(f"Vraag: {query}")
-        print(f"Antwoord: {result['answer']}")
-        print("Relevante chunks:")
-        for i, chunk in enumerate(result['relevant_chunks'], 1):
-            print(f"  Chunk {i}:")
-            print(f"    Content: {chunk['content'][:100]}...")  # Toon eerste 100 karakters van elke chunk
-            print(f"    URL: {chunk['url']}")
-        print(f"Token gebruik: {result['token_usage']}")
-        print("\n" + "="*50 + "\n")
+    def get_chat_history(self) -> List[Dict[str, str]]:
+        return [
+            {"role": "user" if msg.type == "human" else "assistant", "content": msg.content}
+            for msg in self.memory.chat_memory.messages
+        ]
 
-    # Test get_available_models functie
-    print("\nTesting get_available_models function:")
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        print("OPENAI_API_KEY is niet ingesteld in de omgevingsvariabelen")
-    else:
-        available_models = get_available_models(api_key)
-        if available_models:
-            print("Beschikbare GPT modellen:")
-            for model in available_models:
-                print(f"- {model}")
-        else:
-            print("Geen GPT modellen gevonden of er is een fout opgetreden bij het ophalen van de modellen.")
+    def clear_memory(self):
+        self.memory.clear()
 
-__all__ = ['LLMMotor', 'initialize_llm_motor', 'get_available_models']
+    def start_new_conversation(self) -> str:
+        self.clear_memory()
+        opening_message = "Hallo! Hoe kan ik u vandaag helpen met UWV-gerelateerde vragen?"
+        self.memory.chat_memory.add_ai_message(opening_message)
+        return opening_message
+
+def get_available_models(api_key: str) -> List[str]:
+    import openai
+    openai.api_key = api_key
+    models = openai.Model.list()
+    return [model.id for model in models['data'] if model.id.startswith("gpt")]
